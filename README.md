@@ -2,14 +2,21 @@
 Tạo hàng loạt proxy ipv6 từ 1 ipv4. Chú ý: Các trang web không phân giải được ipv6 sẽ không truy cập được qua proxy ipv6
 
 ## Yêu cầu
-- Centos 7
+- Centos
 - Ipv6 \64
 
-## Các bước cài đặt
-[Video chi tiết]: https://youtu.be/YNL61nuh4nc, sử dụng Centos (thuê tại vultr) để cài đặt
+## các bước thực hiện
 
-- Bước 1. Chạy lệnh trên CentOS: `bash <(curl -s "https://raw.githubusercontent.com/ngochoaitn/multi_proxy_ipv6/main/install.sh")`
+- bước 1:
+chạy lệnh : ip link show
+- bước 2:
+lấy interface thay vào interface trong code:
+- bước 3:
+chạy lệnh: sudo nano /usr/local/bin/setup_squid_ipv6_auth.sh ( tạo file setup_squid_ipv6_auth.sh)
+- bước 4:
+dán nội dung file install.sh vào setup_squid_ipv6_auth.sh -> ctrl+o -> enter -> ctrl+x
+- bước 5: chạy lệnh cấp quyền thực thi script
+sudo chmod +x /usr/local/bin/setup_squid_ipv6_auth.sh
+-bước 6: chạy script
+sudo /usr/local/bin/setup_squid_ipv6_auth.sh
 
-- Bước 2: Tải file `proxy.zip`, cấu trúc proxy: `IP4:PORT:LOGIN:PASS`
-
-Thảm khảo: Quậy Vlog
