@@ -1,120 +1,76 @@
-#!/bin/sh
-random() {
-	tr </dev/urandom -dc A-Za-z0-9 | head -c5
-	echo
-}
+#!/bin/bash
 
-array=(1 2 3 4 5 6 7 8 9 0 a b c d e f)
-gen64() {
-	ip64() {
-		echo "${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}${array[$RANDOM % 16]}"
-	}
-	echo "$1:$(ip64):$(ip64):$(ip64):$(ip64)"
-}
-install_3proxy() {
-    echo "installing 3proxy"
-    URL="https://raw.githubusercontent.com/phapnguyen59/ipv6/main/3proxy-3proxy-0.8.6.tar.gz"
-    wget -qO- $URL | bsdtar -xvf-
-    cd 3proxy-3proxy-0.8.6
-    make -f Makefile.Linux
-    mkdir -p /usr/local/etc/3proxy/{bin,logs,stat}
-    cp src/3proxy /usr/local/etc/3proxy/bin/
-    cp ./scripts/rc.d/proxy.sh /etc/init.d/3proxy
-    chmod +x /etc/init.d/3proxy
-    chkconfig 3proxy on
-    cd $WORKDIR
-}
+# Biến cấu hình
+interface="enp0s3"
+base_ip="2001:db8:abcd::"
+start_port=3128
+end_port=3177
+username="proxyuser"
+password="proxypassword"
 
-gen_3proxy() {
-    cat <<EOF
-daemon
-maxconn 1000
-nscache 65536
-timeouts 1 5 30 60 180 1800 15 60
-setgid 65535
-setuid 65535
-flush
-auth strong
+# Cập nhật hệ thống
+echo "Updating system..."
+sudo yum update -y
 
-users $(awk -F "/" 'BEGIN{ORS="";} {print $1 ":CL:" $2 " "}' ${WORKDATA})
+# Cài đặt Squid
+echo "Installing Squid..."
+sudo yum install squid -y
 
-$(awk -F "/" '{print "auth strong\n" \
-"allow " $1 "\n" \
-"proxy -6 -n -a -p" $4 " -i" $3 " -e"$5"\n" \
-"flush\n"}' ${WORKDATA})
-EOF
-}
+# Cài đặt httpd-tools để sử dụng htpasswd
+echo "Installing httpd-tools..."
+sudo yum install httpd-tools -y
 
-gen_proxy_file_for_user() {
-    cat >proxy.txt <<EOF
-$(awk -F "/" '{print $3 ":" $4 ":" $1 ":" $2 }' ${WORKDATA})
-EOF
-}
+# Tạo tệp chứa thông tin người dùng
+echo "Creating password file..."
+sudo htpasswd -cb /etc/squid/passwd $username $password
 
-upload_proxy() {
-    local PASS=$(random)
-    zip --password $PASS proxy.zip proxy.txt
-    URL=$(curl -s --upload-file proxy.zip https://bashupload.com/proxy.zip)
+# Thêm địa chỉ IPv6 vào giao diện mạng
+echo "Adding IPv6 addresses to network interface..."
+for i in {1..50}; do
+    sudo ip -6 addr add ${base_ip}${i}/64 dev $interface
+done
 
-    echo "Proxy is ready! Format IP:PORT:LOGIN:PASS"
-    echo "Download zip archive from: ${URL}"
-    echo "Password: ${PASS}"
+# Cấu hình Squid
+echo "Configuring Squid..."
+sudo tee /etc/squid/squid.conf > /dev/null <<EOL
+# Default Squid configuration
+http_access allow localhost
+http_access deny all
 
-}
-gen_data() {
-    seq $FIRST_PORT $LAST_PORT | while read port; do
-        echo "usr$(random)/pass$(random)/$IP4/$port/$(gen64 $IP6)"
-    done
-}
+# Cấu hình xác thực
+auth_param basic program /usr/lib64/squid/basic_ncsa_auth /etc/squid/passwd
+auth_param basic children 5
+auth_param basic realm Proxy Authentication
+auth_param basic credentialsttl 2 hours
+auth_param basic casesensitive off
+acl authenticated proxy_auth REQUIRED
+http_access allow authenticated
+http_access deny all
 
-gen_iptables() {
-    cat <<EOF
-    $(awk -F "/" '{print "iptables -I INPUT -p tcp --dport " $4 "  -m state --state NEW -j ACCEPT"}' ${WORKDATA}) 
-EOF
-}
+# Cấu hình các cổng proxy
+EOL
 
-gen_ifconfig() {
-    cat <<EOF
-$(awk -F "/" '{print "ifconfig eth0 inet6 add " $5 "/64"}' ${WORKDATA})
-EOF
-}
-echo "installing apps"
-yum -y install gcc net-tools bsdtar zip >/dev/null
+for i in {1..50}; do
+    port=$((start_port + i - 1))
+    echo "http_port [${base_ip}${i}]:${port}" | sudo tee -a /etc/squid/squid.conf
+done
 
-install_3proxy
+echo "acl localnet src ${base_ip}0/64" | sudo tee -a /etc/squid/squid.conf
+echo "http_access allow localnet" | sudo tee -a /etc/squid/squid.conf
+echo "http_access deny all" | sudo tee -a /etc/squid/squid.conf
 
-echo "working folder = /home/proxy-installer"
-WORKDIR="/home/proxy-installer"
-WORKDATA="${WORKDIR}/data.txt"
-mkdir $WORKDIR && cd $_
+# Khởi động lại dịch vụ Squid
+echo "Restarting Squid service..."
+sudo systemctl restart squid
 
-IP4=$(curl -4 -s icanhazip.com)
-IP6=$(curl -6 -s icanhazip.com | cut -f1-4 -d':')
+# Kiểm tra trạng thái của Squid
+echo "Checking Squid service status..."
+sudo systemctl status squid
 
-echo "Internal ip = ${IP4}. Exteranl sub for ip6 = ${IP6}"
+# Kiểm tra kết nối proxy
+echo "Testing proxy connections..."
+for i in {1..50}; do
+    curl -x [${base_ip}${i}]:$((start_port + i - 1)) -U $username:$password http://ifconfig.co
+done
 
-echo "How many proxy do you want to create? Example 500"
-read COUNT
-
-FIRST_PORT=5000
-LAST_PORT=$(($FIRST_PORT + $COUNT))
-
-gen_data >$WORKDIR/data.txt
-gen_iptables >$WORKDIR/boot_iptables.sh
-gen_ifconfig >$WORKDIR/boot_ifconfig.sh
-chmod +x ${WORKDIR}/boot_*.sh /etc/rc.local
-
-gen_3proxy >/usr/local/etc/3proxy/3proxy.cfg
-
-cat >>/etc/rc.local <<EOF
-bash ${WORKDIR}/boot_iptables.sh
-bash ${WORKDIR}/boot_ifconfig.sh
-ulimit -n 10048
-service 3proxy start
-EOF
-
-bash /etc/rc.local
-
-gen_proxy_file_for_user
-
-upload_proxy
+echo "Setup complete."
