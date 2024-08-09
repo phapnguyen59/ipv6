@@ -5,10 +5,6 @@ interface="enp0s3"
 base_ip="2001:db8:abcd::"
 port=3128
 
-# Cập nhật hệ thống
-echo "Updating system..."
-sudo yum update -y
-
 # Cài đặt Squid
 echo "Installing Squid..."
 sudo yum install squid -y
